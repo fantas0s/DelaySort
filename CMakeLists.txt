@@ -22,6 +22,8 @@ add_executable(delaysortUnitTest
     tst_returnscorrectdelay_char.cpp
     tst_returnscorrectdelay_int.h
     tst_returnscorrectdelay_int.cpp
+    tst_returnscorrectsleep_int.h
+    tst_returnscorrectsleep_int.cpp
     receiverobject.h
     receiverobject.cpp
     DelaySort.h

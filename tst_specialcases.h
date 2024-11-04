@@ -10,6 +10,10 @@ public:
 
 private slots:
     void init();
+    void emptyQList_sleepSort();
+    void oneQListValue_sleepSort();
+    void giantOffset_sleepSort();
+    void giantOffset_sort();
     void emptyStdVector_expectInstantSignal();
     void oneStdVectorValue_expectInstantSignal();
     void twoStdVectorValues_killBeforeSignal();

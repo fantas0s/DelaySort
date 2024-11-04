@@ -3,10 +3,11 @@
 #include <QtVersionChecks>
 static_assert(QT_VERSION >= QT_VERSION_CHECK(6, 7, 0), "Qt version must be at least 6.7.0");
 
+#include <QEventLoop>
 #include <QMetaObject>
-#include <QTimer>
-#include <QMutexLocker>
 #include <QMutex>
+#include <QMutexLocker>
+#include <QTimer>
 
 // Supported types are limited by types that can be passed into offsetFor() and toMsec()
 template<typename T>
@@ -22,47 +23,26 @@ concept CharType = std::same_as<T, char> || std::same_as<T, wchar_t> || std::sam
 class DelaySort
 {
 public:
+    /* Overloaded functions limit the possible vector types. */
+    template<typename T>
+    static inline QList<T> sleepSort(const QList<T> &values)
+    {
+        return sleepSort_impl(values);
+    }
+
+    template<typename T>
+    static inline std::vector<T> sleepSort(const std::vector<T> &values)
+    {
+        return sleepSort_impl(values);
+    }
+
     template<typename T, typename Func1>
     static inline std::chrono::milliseconds sort(
         const QList<T> &values,
         typename QtPrivate::ContextTypeForFunctor<Func1>::ContextType *receiver,
         Func1 &&slotPtr)
     {
-        const auto valueCount = values.size();
-        // Empty array or one value array can be returned at once
-        if (valueCount < 2) {
-            QMetaObject::invokeMethod(receiver,
-                                      slotPtr,
-                                      Qt::ConnectionType::DirectConnection,
-                                      values);
-            return std::chrono::milliseconds{0}; // Already called the slot
-        }
-        // Otherwise, run
-        QList<T> *results = new QList<T>;
-        bool *guard = new bool;
-        *guard = true; // results has been allocated
-        // When receiver is deleted, free pointer AND guard (all timer connections will be destroyed so no more calls to lambda will occur)
-        QObject::connect(receiver, &QObject::destroyed, [results, guard]() {
-            deletePtrs(results, guard, true);
-        });
-        const auto offset = offsetFor(values);
-        for (const auto &value : values) {
-            QTimer::singleShot(toMsec(value, offset),
-                               Qt::TimerType::PreciseTimer,
-                               receiver,
-                               [results, guard, receiver, slotPtr, valueCount, value]() {
-                                   appendToResults(*results, value);
-                                   if (results->size() == valueCount) {
-                                       QMetaObject::invokeMethod(receiver,
-                                                                 slotPtr,
-                                                                 Qt::ConnectionType::DirectConnection,
-                                                                 *results);
-                                       // All values processed, free pointer as it won't be used after this. Keep guard.
-                                       deletePtrs(results, guard, false);
-                                   }
-                               });
-        }
-        return toMsec(std::ranges::max(values), offset);
+        return sort_impl(values, receiver, slotPtr);
     }
 
     template<typename T, typename Func1>
@@ -71,6 +51,43 @@ public:
         typename QtPrivate::ContextTypeForFunctor<Func1>::ContextType *receiver,
         Func1 &&slotPtr)
     {
+        return sort_impl(values, receiver, slotPtr);
+    }
+
+private:
+    DelaySort() = delete;
+    // common code with wider acceptance of template types
+    template<typename List_T>
+    static inline List_T sleepSort_impl(const List_T &values)
+    {
+        const auto valueCount = values.size();
+        // Empty array or one value array can be returned at once
+        if (valueCount < 2)
+            return values;
+        // Otherwise, run
+        List_T results;
+        const auto offset = offsetFor(values);
+        QEventLoop loop;
+        for (const auto &value : values) {
+            QTimer::singleShot(toMsec(value, offset),
+                               Qt::TimerType::PreciseTimer,
+                               [&results, valueCount, value, &loop]() {
+                                   appendToResults(results, value);
+                                   if (results.size() == valueCount) {
+                                       loop.exit(0);
+                                   }
+                               });
+        }
+        loop.exec();
+        return results;
+    }
+
+    template<typename List_T, typename Func1>
+    static inline std::chrono::milliseconds sort_impl(
+        const List_T &values,
+        typename QtPrivate::ContextTypeForFunctor<Func1>::ContextType *receiver,
+        Func1 &&slotPtr)
+    {
         const auto valueCount = values.size();
         // Empty array or one value array can be returned at once
         if (valueCount < 2) {
@@ -81,7 +98,7 @@ public:
             return std::chrono::milliseconds{0}; // Already called the slot
         }
         // Otherwise, run
-        std::vector<T> *results = new std::vector<T>;
+        List_T *results = new List_T;
         bool *guard = new bool;
         *guard = true; // results has been allocated
         // When receiver is deleted, free pointer AND guard (all timer connections will be destroyed so no more calls to lambda will occur)
@@ -108,8 +125,6 @@ public:
         return toMsec(std::ranges::max(values), offset);
     }
 
-private:
-    DelaySort() = delete;
     // automatic overload for supported types
     template<typename T>
     static T offsetFor(const QList<T> &values)
@@ -163,36 +178,15 @@ private:
 
     // mutexed handling for thread-safety.
     static std::unique_ptr<QMutex> s_mutex;
-    template<typename T>
-    static void appendToResults(std::vector<T> &results, const T &value)
+    template<typename List_T, typename T>
+    static void appendToResults(List_T &results, const T &value)
     {
         QMutexLocker lock(s_mutex.get());
         results.emplace_back(value);
     }
 
-    template<typename T>
-    static void deletePtrs(std::vector<T> *results, bool *guard, bool deleteGuard)
-    {
-        QMutexLocker lock(s_mutex.get());
-        if (*guard) {
-            /* Still allocated */
-            delete results;
-            *guard = false;
-        }
-        if (deleteGuard) {
-            delete guard;
-        }
-    }
-
-    template<typename T>
-    static void appendToResults(QList<T> &results, const T &value)
-    {
-        QMutexLocker lock(s_mutex.get());
-        results.emplace_back(value);
-    }
-
-    template<typename T>
-    static void deletePtrs(QList<T> *results, bool *guard, bool deleteGuard)
+    template<typename List_T>
+    static void deletePtrs(List_T *results, bool *guard, bool deleteGuard)
     {
         QMutexLocker lock(s_mutex.get());
         if (*guard) {
