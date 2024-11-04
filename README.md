@@ -21,8 +21,8 @@ protected:
          */
     }
 private slots:
-    /* The slot that receives the result must match to this signature */
-    void handleSortingResults(const QVariantList& results)
+    /* The slot that receives the result must match the signature of the array it passed as parameter */
+    void handleSortingResults(const QList<qint16>& results)
     {
         // do something with sorted values
     }

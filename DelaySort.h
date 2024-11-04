@@ -5,9 +5,8 @@ static_assert(QT_VERSION >= QT_VERSION_CHECK(6, 7, 0), "Qt version must be at le
 
 #include <QMetaObject>
 #include <QTimer>
-#include <QVariant>
-
-class QMutex;
+#include <QMutexLocker>
+#include <QMutex>
 
 // Supported types are limited by types that can be passed into offsetFor() and toMsec()
 template<typename T>
@@ -27,31 +26,19 @@ public:
     static inline std::chrono::milliseconds sort(
         const QList<T> &values,
         typename QtPrivate::ContextTypeForFunctor<Func1>::ContextType *receiver,
-        Func1 &&slot)
-    {
-        return sort(std::vector<T>{values.cbegin(), values.cend()}, receiver, slot);
-    }
-
-    template<typename T, typename Func1>
-    static inline std::chrono::milliseconds sort(
-        const std::vector<T> &values,
-        typename QtPrivate::ContextTypeForFunctor<Func1>::ContextType *receiver,
         Func1 &&slotPtr)
     {
         const auto valueCount = values.size();
         // Empty array or one value array can be returned at once
-        if (values.size() < 2) {
-            QVariantList results;
-            if (!values.empty())
-                results.append(QVariant::fromValue(values.front()));
+        if (valueCount < 2) {
             QMetaObject::invokeMethod(receiver,
                                       slotPtr,
                                       Qt::ConnectionType::DirectConnection,
-                                      results);
+                                      values);
             return std::chrono::milliseconds{0}; // Already called the slot
         }
         // Otherwise, run
-        QVariantList *results = new QVariantList;
+        QList<T> *results = new QList<T>;
         bool *guard = new bool;
         *guard = true; // results has been allocated
         // When receiver is deleted, free pointer AND guard (all timer connections will be destroyed so no more calls to lambda will occur)
@@ -64,7 +51,50 @@ public:
                                Qt::TimerType::PreciseTimer,
                                receiver,
                                [results, guard, receiver, slotPtr, valueCount, value]() {
-                                   appendToResults(*results, QVariant::fromValue(value));
+                                   appendToResults(*results, value);
+                                   if (results->size() == valueCount) {
+                                       QMetaObject::invokeMethod(receiver,
+                                                                 slotPtr,
+                                                                 Qt::ConnectionType::DirectConnection,
+                                                                 *results);
+                                       // All values processed, free pointer as it won't be used after this. Keep guard.
+                                       deletePtrs(results, guard, false);
+                                   }
+                               });
+        }
+        return toMsec(std::ranges::max(values), offset);
+    }
+
+    template<typename T, typename Func1>
+    static inline std::chrono::milliseconds sort(
+        const std::vector<T> &values,
+        typename QtPrivate::ContextTypeForFunctor<Func1>::ContextType *receiver,
+        Func1 &&slotPtr)
+    {
+        const auto valueCount = values.size();
+        // Empty array or one value array can be returned at once
+        if (valueCount < 2) {
+            QMetaObject::invokeMethod(receiver,
+                                      slotPtr,
+                                      Qt::ConnectionType::DirectConnection,
+                                      values);
+            return std::chrono::milliseconds{0}; // Already called the slot
+        }
+        // Otherwise, run
+        std::vector<T> *results = new std::vector<T>;
+        bool *guard = new bool;
+        *guard = true; // results has been allocated
+        // When receiver is deleted, free pointer AND guard (all timer connections will be destroyed so no more calls to lambda will occur)
+        QObject::connect(receiver, &QObject::destroyed, [results, guard]() {
+            deletePtrs(results, guard, true);
+        });
+        const auto offset = offsetFor(values);
+        for (const auto &value : values) {
+            QTimer::singleShot(toMsec(value, offset),
+                               Qt::TimerType::PreciseTimer,
+                               receiver,
+                               [results, guard, receiver, slotPtr, valueCount, value]() {
+                                   appendToResults(*results, value);
                                    if (results->size() == valueCount) {
                                        QMetaObject::invokeMethod(receiver,
                                                                  slotPtr,
@@ -118,6 +148,14 @@ private:
         });
         return offsetFor(transformed);
     }
+    static quint32 offsetFor(const QList<QChar> &values)
+    {
+        std::vector<quint32> transformed;
+        std::ranges::transform(values, std::back_inserter(transformed), [](const QChar &value) {
+            return value.unicode();
+        });
+        return offsetFor(transformed);
+    }
     static std::chrono::milliseconds toMsec(const QChar &value, quint32 offset)
     {
         return toMsec(value.unicode(), offset);
@@ -125,6 +163,45 @@ private:
 
     // mutexed handling for thread-safety.
     static std::unique_ptr<QMutex> s_mutex;
-    static void appendToResults(QVariantList &results, const QVariant &value);
-    static void deletePtrs(QVariantList *results, bool *guard, bool deleteGuard);
+    template<typename T>
+    static void appendToResults(std::vector<T> &results, const T &value)
+    {
+        QMutexLocker lock(s_mutex.get());
+        results.emplace_back(value);
+    }
+
+    template<typename T>
+    static void deletePtrs(std::vector<T> *results, bool *guard, bool deleteGuard)
+    {
+        QMutexLocker lock(s_mutex.get());
+        if (*guard) {
+            /* Still allocated */
+            delete results;
+            *guard = false;
+        }
+        if (deleteGuard) {
+            delete guard;
+        }
+    }
+
+    template<typename T>
+    static void appendToResults(QList<T> &results, const T &value)
+    {
+        QMutexLocker lock(s_mutex.get());
+        results.emplace_back(value);
+    }
+
+    template<typename T>
+    static void deletePtrs(QList<T> *results, bool *guard, bool deleteGuard)
+    {
+        QMutexLocker lock(s_mutex.get());
+        if (*guard) {
+            /* Still allocated */
+            delete results;
+            *guard = false;
+        }
+        if (deleteGuard) {
+            delete guard;
+        }
+    }
 };

@@ -16,7 +16,7 @@ void ReturnsCorrectDelay_int::fourStdVectorValues_waitSignal()
 {
     const auto result = DelaySort::sort(std::vector<quint8>{2, 1, 3, 1},
                                         m_testObject.get(),
-                                        &ReceiverObject::sortComplete);
+                                        &ReceiverObject::sortCompleteSvQui8);
     QCOMPARE(result, std::chrono::milliseconds{3});
     QTest::qWait(result + s_additionalDelay);
     QCOMPARE(m_testObject->signalsReceived(), 1);
@@ -32,7 +32,7 @@ void ReturnsCorrectDelay_int::fourQListWithNegativeValues_waitSignal()
 {
     const auto result = DelaySort::sort(QList<qint64>{5, 0, -5, -3},
                                         m_testObject.get(),
-                                        &ReceiverObject::sortComplete);
+                                        &ReceiverObject::sortCompleteQlQi64);
     QCOMPARE(result, std::chrono::milliseconds{11});
     QTest::qWait(result + s_additionalDelay);
     QCOMPARE(m_testObject->signalsReceived(), 1);
