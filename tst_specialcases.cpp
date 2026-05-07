@@ -1,6 +1,7 @@
 #include "tst_specialcases.h"
 #include "DelaySort.h"
 
+#include <QElapsedTimer>
 #include <QtTest>
 
 Specialcases::Specialcases() {}
@@ -27,8 +28,12 @@ void Specialcases::oneQListValue_sleepSort()
 
 void Specialcases::giantOffset_sleepSort()
 {
-    // takes 30 seconds without offset
+    // takes 30 seconds without offset. Even old 286 processor should do this under 5 seconds. :D
+    QElapsedTimer timer;
+    timer.start();
     const auto result = DelaySort::sleepSort(QList<int>{30005, 30000});
+    const auto elapsed = timer.elapsed();
+    QCOMPARE_LT(elapsed, 5000);
     QCOMPARE(result.size(), 2);
     QCOMPARE(result.front(), 30000);
     QCOMPARE(result.back(), 30005);
@@ -41,6 +46,7 @@ void Specialcases::giantOffset_sort()
                                         m_testObject.get(),
                                         &ReceiverObject::sortCompleteSvQui64);
     QCOMPARE(result, std::chrono::milliseconds{6});
+    // We just wait the normal delay. If offset fails, the results are not available and test fails.
     QTest::qWait(result + s_additionalDelay);
     QCOMPARE(m_testObject->signalsReceived(), 1);
     const auto values = m_testObject->results();
